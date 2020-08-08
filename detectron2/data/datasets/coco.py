@@ -66,7 +66,10 @@ def load_coco_json(json_file, image_root, dataset_name=None, extra_annotation_ke
         cats = coco_api.loadCats(cat_ids)
         # The categories in a custom json file may not be sorted.
         thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x["id"])]
+        my_thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x["id"]) if c["id"] in meta.get("my_classes")]
+        # Change here 
         meta.thing_classes = thing_classes
+        meta.my_thing_classes = my_thing_classes
 
         # In COCO, certain category ids are artificially removed,
         # and by convention they are always ignored.
@@ -133,6 +136,10 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
     num_instances_without_valid_segmentation = 0
 
+    # Original COCO IDs, not the mapped ones.
+    my_classes = meta.get("my_classes") # Custom classes
+    # print(my_classes)
+
     for (img_dict, anno_dict_list) in imgs_anns:
         record = {}
         record["file_name"] = os.path.join(image_root, img_dict["file_name"])
@@ -155,13 +162,12 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
             obj = {key: anno[key] for key in ann_keys if key in anno}
 
+            if obj["category_id"] not in my_classes:
+                continue
+            
             segm = anno.get("segmentation", None)
             if segm:  # either list[list[float]] or dict(RLE)
-                if isinstance(segm, dict):
-                    if isinstance(segm["counts"], list):
-                        # convert to compressed RLE
-                        segm = mask_util.frPyObjects(segm, *segm["size"])
-                else:
+                if not isinstance(segm, dict):
                     # filter out invalid polygons (< 3 points)
                     segm = [poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6]
                     if len(segm) == 0:
@@ -322,7 +328,7 @@ def convert_to_coco_dict(dataset_name):
         }
         coco_images.append(coco_image)
 
-        anns_per_image = image_dict.get("annotations", [])
+        anns_per_image = image_dict["annotations"]
         for annotation in anns_per_image:
             # create a new dict with only COCO fields
             coco_annotation = {}
@@ -383,7 +389,6 @@ def convert_to_coco_dict(dataset_name):
                 if isinstance(seg, dict):  # RLE
                     counts = seg["counts"]
                     if not isinstance(counts, str):
-                        # make it json-serializable
                         seg["counts"] = counts.decode("ascii")
 
             coco_annotations.append(coco_annotation)
@@ -397,9 +402,13 @@ def convert_to_coco_dict(dataset_name):
         "date_created": str(datetime.datetime.now()),
         "description": "Automatically generated COCO json file for Detectron2.",
     }
-    coco_dict = {"info": info, "images": coco_images, "categories": categories, "licenses": None}
-    if len(coco_annotations) > 0:
-        coco_dict["annotations"] = coco_annotations
+    coco_dict = {
+        "info": info,
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": categories,
+        "licenses": None,
+    }
     return coco_dict
 
 
